@@ -4,7 +4,19 @@ import { ApiErrorHandler } from "../utils/ApiErrorHandler.js";
 import { uploadCloudinary } from "../utils/uploadCloudnary.js";
 import { apiResponseHandler } from "../utils/apiResponseHandler.js";
 
+const generateAccessAndRefreshTokens = async (userId) => {
+    const user = await User.findById(userId)
+    if (!user) {
+        throw new ApiErrorHandler(false, 404, "User not found")
+    }
+    const accessToken = user.generateACCESSToken()
+    const refreshToken = user.generateRefToken()
 
+    user.refreshToken = refreshToken
+    await user.save()
+
+    return { accessToken, refreshToken }
+}
 
 
 const registerUser = asyncHandler(async (req, res) => {
@@ -25,6 +37,8 @@ const registerUser = asyncHandler(async (req, res) => {
 
 
     const avatarLocalPath = req.file
+    console.log(avatarLocalPath);
+
     const profileObj = avatarLocalPath?.path
     const profileMimetype = profileObj?.mimetype
 
@@ -66,4 +80,70 @@ const registerUser = asyncHandler(async (req, res) => {
             ))
 })
 
-export { registerUser }
+const loginUser = asyncHandler(async (req, res) => {
+    const { email, password } = req.body
+    if (!email || !password) {
+        throw new ApiErrorHandler(false, 400, "Email and password are required")
+    }
+    const user = await User.findOne({ email })
+    if (!user) {
+        throw new ApiErrorHandler(false, 404, "User not found")
+    }
+    const isPasswordCorrect = await user.isPasswordCorrect(password)
+    if (!isPasswordCorrect) {
+        throw new ApiErrorHandler(false, 401, "Invalid credentials")
+    }
+    const tokens = await generateAccessAndRefreshTokens(user._id)
+    if (!tokens) {
+        throw new ApiErrorHandler(false, 500, "Error in generating tokens")
+    }
+    const { refreshToken, accessToken } = tokens
+    const refreshTokenOptions = {
+        httpOnly: true,
+        secure: false,            // ✅ false for localhost
+        sameSite: "lax",          // ✅ good for dev
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        path: "/",                // ✅ optional but recommended
+    };
+
+    const accessTokenOptions = {
+        httpOnly: true,           // or false if you want to access in JS
+        secure: false,
+        sameSite: "lax",
+        maxAge: 15 * 60 * 1000,   // 15 minutes
+        path: "/"
+    };
+
+    return res
+        .status(200)
+        .cookie("refreshToken", refreshToken, refreshTokenOptions)
+        .cookie("accessToken", accessToken, accessTokenOptions)
+        .json(
+            new apiResponseHandler(
+                true,
+                200,
+                "Login successful"
+            ))
+})
+
+
+const getUser = asyncHandler(async (req, res) => {
+    const user = req.user;
+    if (!user) {
+        throw new ApiErrorHandler(false, 400, "user not found")
+    }
+    res.status(200)
+        .json(
+            new apiResponseHandler(
+                true,
+                200,
+                "User fetched succesfully",
+                user
+            )
+        )
+})
+export {
+    registerUser,
+    loginUser,
+    getUser
+}
